@@ -1,7 +1,4 @@
-# Data files (Do NOT upload dataset - 2.5GB)
-dataset/
-*.tsv
-*.csv
+# Large compressed archives
 *.zip
 *.tar.gz
 
