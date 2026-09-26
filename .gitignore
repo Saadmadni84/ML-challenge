@@ -1,0 +1,23 @@
+# Data files (Do NOT upload dataset - 2.5GB)
+dataset/
+*.tsv
+*.csv
+*.zip
+*.tar.gz
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.ipynb_checkpoints/
+.env
+venv/
+.venv/
+
+# Submission outputs
+output/
+scratch/
