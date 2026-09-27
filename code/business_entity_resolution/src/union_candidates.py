@@ -10,9 +10,17 @@ Caveat: scores from two different TF-IDF spaces are not strictly
 comparable, so recall@K curves on the union are approximate for K < Kmax.
 Quote recall@Kmax (the full union) as the recall ceiling.
 
+--floor drops merged pairs whose max channel score is below the floor
+(these are retrieval junk: weak in BOTH channels). Apply the SAME floor to
+train/val/test unions so the pair distribution matches everywhere.
+
+Row order follows file A (both inputs must share S1 row order, which holds
+by construction when both come from blocking.py on the same S1 file).
+Order matters: predict.py streams S1 + union + channels in lockstep.
+
 Usage:
     python3 union_candidates.py --a output/cand.tsv --b output/cand_addr.tsv \\
-        --k-per-file 50 --out output/cand_union.tsv
+        --k-per-file 50 --floor 0.05 --out output/cand_union.tsv
 """
 
 import argparse
@@ -50,10 +58,14 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
 
     A, B = load(args.a, args.k_per_file), load(args.b, args.k_per_file)
+    if set(A) != set(B):
+        print(f"WARNING: S1 sets differ (A={len(A):,}, B={len(B):,}, "
+              f"common={len(set(A) & set(B)):,}); unioning anyway.")
+    ordered = list(A.keys()) + [k for k in B.keys() if k not in A]
     n_total = 0
     with open(args.out, "w", encoding="utf-8", newline="") as f:
         f.write("source1_entity_id\tcandidate_entity_ids\n")
-        for qid in A.keys() | B.keys():
+        for qid in ordered:
             merged = {}
             for cid, s in A.get(qid, []) + B.get(qid, []):
                 if cid not in merged or s > merged[cid]:
