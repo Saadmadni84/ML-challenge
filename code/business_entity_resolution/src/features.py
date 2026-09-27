@@ -78,3 +78,46 @@ FEATURE_NAMES = [
     "addr_eq", "addr_ratio", "addr_tset", "addr_jacc", "addr_tridice",
     "tgt_addr_empty", "numtok_jacc",
 ]
+
+
+# ---------------------------------------------------------------------------
+# v2 additions (Exp4): blocking-signal features.
+# Retrieval strength is orthogonal evidence: a truth retrieved at rank 1 with
+# cosine 0.9 differs from one at rank 87 with 0.15, even when the string
+# similarities look alike. The union file alone cannot tell them apart.
+# ---------------------------------------------------------------------------
+
+BLOCKING_NAMES = [
+    "bname_hit", "bname_score", "bname_rank",
+    "baddr_hit", "baddr_score", "baddr_rank",
+    "bbest_rank", "n_cands",
+]
+
+FEATURE_NAMES_V2 = FEATURE_NAMES + BLOCKING_NAMES
+
+
+def pair_features_v2(s1_name, s1_addr, t_name, t_addr,
+                     name_hit=None, addr_hit=None, n_cands=0):
+    """v1 string features + blocking signals.
+
+    name_hit/addr_hit: (score, rank) from that retrieval channel, or None
+    when the pair was not retrieved by that channel. Ranks are 1-based.
+    n_cands: union size for this S1 (crowded neighborhoods are riskier).
+    """
+    f = pair_features(s1_name, s1_addr, t_name, t_addr)
+    ranks = []
+    if name_hit is None:
+        f.update({"bname_hit": 0.0, "bname_score": 0.0, "bname_rank": 0.0})
+    else:
+        s, r = name_hit
+        f.update({"bname_hit": 1.0, "bname_score": float(s), "bname_rank": float(r)})
+        ranks.append(r)
+    if addr_hit is None:
+        f.update({"baddr_hit": 0.0, "baddr_score": 0.0, "baddr_rank": 0.0})
+    else:
+        s, r = addr_hit
+        f.update({"baddr_hit": 1.0, "baddr_score": float(s), "baddr_rank": float(r)})
+        ranks.append(r)
+    f["bbest_rank"] = float(min(ranks)) if ranks else 0.0
+    f["n_cands"] = float(n_cands)
+    return f

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exp3: LightGBM pair classifier + threshold tuned on val macro-F0.5.
+"""LightGBM pair classifier + threshold tuned on val macro-F0.5.
 
 Pipeline:
   1. Load train/val S1 id sets (split.py), union candidates, all sources.
@@ -12,11 +12,17 @@ Pipeline:
   4. Sweep the decision threshold on VAL macro-F0.5 (the actual objective);
      coarse grid then refine. Saves model.txt + threshold.json + val preds.
 
-Usage:
+Feature sets:
+  v1 (Exp3): 18 string-similarity features.
+  v2 (Exp4): v1 + 8 blocking-signal features (per-channel score/rank/hit,
+             best rank, union size). Requires --cand-name/--cand-addr.
+
+Usage (v2):
     python3 train.py --s1 sample/sample_s1.csv --s2 sample/sample_s2.csv \\
         --s3 sample/sample_s3.csv --train-gt sample/split/train_gt.tsv \\
         --val-gt sample/split/val_gt.tsv --candidates output/cand_union.tsv \\
-        --out-dir output/exp3 --seed 42
+        --cand-name output/cand.tsv --cand-addr output/cand_addr.tsv \\
+        --feature-set v2 --out-dir output/exp4 --seed 42
 """
 
 import argparse
@@ -29,7 +35,8 @@ import time
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from features import FEATURE_NAMES, pair_features  # noqa: E402
+from features import (FEATURE_NAMES, FEATURE_NAMES_V2, pair_features,  # noqa: E402
+                      pair_features_v2)
 from metrics import prf_for_entity  # noqa: E402
 
 import lightgbm as lgb
@@ -67,8 +74,26 @@ def load_cands(path):
     return out
 
 
-def build_matrix(s1_ids, cands, truth, sources):
-    n_feat = len(FEATURE_NAMES)
+def load_scored_cands(path):
+    """s1 -> {tid: (score, 1-based rank)}. File order defines the rank."""
+    out = {}
+    with open(path, encoding="utf-8", newline="") as f:
+        for row in csv.DictReader(f, delimiter="\t"):
+            cell = (row.get("candidate_entity_ids") or "").strip()
+            d = {}
+            if cell:
+                for rank, x in enumerate(cell.split(","), start=1):
+                    if not x.strip():
+                        continue
+                    cid, _, score = x.partition(":")
+                    d[cid] = (float(score or 0.0), rank)
+            out[row["source1_entity_id"]] = d
+    return out
+
+
+def build_matrix(s1_ids, cands, truth, sources, feat_names, sig_name=None, sig_addr=None):
+    v2 = feat_names is FEATURE_NAMES_V2
+    n_feat = len(feat_names)
     Xs = np.empty((0, n_feat), dtype=np.float32)
     ys = np.empty((0,), dtype=np.int8)
     idx = []
@@ -76,10 +101,17 @@ def build_matrix(s1_ids, cands, truth, sources):
     for qi, q in enumerate(s1_ids):
         t = truth.get(q, set())
         sn, sa = sources[q]
-        for tid in cands.get(q, []):
+        qlist = cands.get(q, [])
+        for tid in qlist:
             tn, ta = sources[tid]
-            f = pair_features(sn, sa, tn, ta)
-            buf_x.append([f[n] for n in FEATURE_NAMES])
+            if v2:
+                f = pair_features_v2(sn, sa, tn, ta,
+                                     name_hit=(sig_name.get(q, {}) or {}).get(tid),
+                                     addr_hit=(sig_addr.get(q, {}) or {}).get(tid),
+                                     n_cands=len(qlist))
+            else:
+                f = pair_features(sn, sa, tn, ta)
+            buf_x.append([f[n] for n in feat_names])
             buf_y.append(1 if tid in t else 0)
             idx.append((q, tid))
         if (qi + 1) % 2000 == 0 or qi + 1 == len(s1_ids):
@@ -94,7 +126,6 @@ def build_matrix(s1_ids, cands, truth, sources):
 def score_threshold(val_ids, val_truth, idx_s1, idx_tid, proba, tau):
     sum_f = sum_p = sum_r = 0.0
     n_sing = n_sing_ok = 0
-    # group kept tids by s1
     preds = {}
     for s1id, tid, p in zip(idx_s1, idx_tid, proba):
         if p >= tau:
@@ -116,30 +147,45 @@ def score_threshold(val_ids, val_truth, idx_s1, idx_tid, proba, tau):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Exp3: LightGBM + F0.5 threshold.")
+    ap = argparse.ArgumentParser(description="LightGBM + F0.5 threshold.")
     ap.add_argument("--s1", required=True)
     ap.add_argument("--s2", required=True)
     ap.add_argument("--s3", required=True)
     ap.add_argument("--train-gt", required=True)
     ap.add_argument("--val-gt", required=True)
-    ap.add_argument("--candidates", required=True)
+    ap.add_argument("--candidates", required=True,
+                    help="Union candidates (pair enumeration).")
+    ap.add_argument("--cand-name", default=None,
+                    help="Scored name-channel file (v2 signals).")
+    ap.add_argument("--cand-addr", default=None,
+                    help="Scored address-channel file (v2 signals).")
+    ap.add_argument("--feature-set", choices=["v1", "v2"], default="v1")
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
     t0 = time.time()
 
+    feat_names = FEATURE_NAMES_V2 if args.feature_set == "v2" else FEATURE_NAMES
+    if args.feature_set == "v2" and not (args.cand_name and args.cand_addr):
+        ap.error("--feature-set v2 requires --cand-name and --cand-addr")
+    print(f"Feature set: {args.feature_set} ({len(feat_names)} features)", flush=True)
+
     sources = load_sources(args.s1, args.s2, args.s3)
     train_truth, val_truth = load_gt(args.train_gt), load_gt(args.val_gt)
     cands = load_cands(args.candidates)
+    sig_name = load_scored_cands(args.cand_name) if args.cand_name else None
+    sig_addr = load_scored_cands(args.cand_addr) if args.cand_addr else None
     train_ids = sorted(train_truth)
     val_ids = sorted(val_truth)
     print(f"Train S1: {len(train_ids):,} | Val S1: {len(val_ids):,}", flush=True)
 
     print("Featurizing train pairs...", flush=True)
-    Xtr, ytr, _ = build_matrix(train_ids, cands, train_truth, sources)
+    Xtr, ytr, _ = build_matrix(train_ids, cands, train_truth, sources,
+                               feat_names, sig_name, sig_addr)
     print("Featurizing val pairs...", flush=True)
-    Xva, yva, idx_va = build_matrix(val_ids, cands, val_truth, sources)
+    Xva, yva, idx_va = build_matrix(val_ids, cands, val_truth, sources,
+                                    feat_names, sig_name, sig_addr)
     pos, neg = int(ytr.sum()), int((1 - ytr).sum())
     print(f"Train pairs: {len(ytr):,} (pos {pos:,} = {100 * pos / len(ytr):.2f}%) | "
           f"Val pairs: {len(yva):,}", flush=True)
@@ -156,7 +202,7 @@ def main():
     print("Training LightGBM...", flush=True)
     bst = lgb.train(params, dtr, num_boost_round=1000,
                     valid_sets=[dva],
-                    callbacks=[lgb.early_stopping(50), lgb.log_evaluation(100)])
+                    callbacks=[lgb.early_stopping(50), lgb.log_evaluation(200)])
     print(f"Best iteration: {bst.best_iteration}", flush=True)
     bst.save_model(os.path.join(args.out_dir, "model.txt"))
 
@@ -187,7 +233,8 @@ def main():
     with open(os.path.join(args.out_dir, "threshold.json"), "w") as f:
         json.dump({"tau": best, "val_f05": r["f05"], "val_prec": r["prec"],
                    "val_rec": r["rec"], "val_sing_acc": r["sing_acc"],
-                   "best_iteration": bst.best_iteration}, f, indent=2)
+                   "best_iteration": bst.best_iteration,
+                   "feature_set": args.feature_set}, f, indent=2)
     with open(os.path.join(args.out_dir, "val_pred_best.tsv"), "w") as f:
         f.write("source1_entity_id\tmatched_entity_ids\n")
         preds = {}
@@ -197,7 +244,7 @@ def main():
         for s1id in val_ids:
             f.write(f"{s1id}\t{','.join(preds.get(s1id, []))}\n")
 
-    imp = sorted(zip(FEATURE_NAMES, bst.feature_importance(importance_type="gain")),
+    imp = sorted(zip(feat_names, bst.feature_importance(importance_type="gain")),
                  key=lambda kv: -kv[1])
     print("\nFeature importance (gain):")
     for name, g in imp:
