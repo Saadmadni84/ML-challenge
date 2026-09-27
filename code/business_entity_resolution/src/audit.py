@@ -6,13 +6,13 @@ runs even on small machines against the multi-GB source files. Stdlib only.
 
 Examples:
     # Audit one source file (+ show 3 random example rows):
-    python3 inspect.py --source dataset/train/train_source1.tsv --examples 3
+    python3 audit.py --source dataset/train/train_source1.tsv --examples 3
 
     # Audit the ground truth match distribution:
-    python3 inspect.py --ground-truth dataset/train/train_ground_truth.tsv
+    python3 audit.py --ground-truth dataset/train/train_ground_truth.tsv
 
     # Quick row counts only (fastest):
-    python3 inspect.py --source dataset/train/train_source2.tsv --counts-only
+    python3 audit.py --source dataset/train/train_source2.tsv --counts-only
 """
 
 import argparse

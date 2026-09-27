@@ -31,6 +31,9 @@ def main():
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
+    out_dir = os.path.dirname(os.path.abspath(args.out))
+    os.makedirs(out_dir, exist_ok=True)
+
     # Index every S2/S3 id by (country, normalized name). Empty normalized
     # names are skipped: matching on '' would merge unrelated records.
     index = {}

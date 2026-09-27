@@ -10,7 +10,7 @@ from the training/test data using only this folder + the dataset.
 code/business_entity_resolution/
 ├── src/
 │   ├── metrics.py    # local replica of the leaderboard macro-F0.5 scorer
-│   ├── inspect.py    # streaming, low-RAM data auditor (stdlib only)
+│   ├── audit.py       # streaming, low-RAM data auditor (stdlib only)
 │   ├── ...           # (blocking / features / train / predict added step by step)
 ├── README.md         # this file (run instructions)
 └── requirements.txt  # dependencies (pinned before final submission)
@@ -27,9 +27,9 @@ pip install -r code/business_entity_resolution/requirements.txt
 ```bash
 # 0. Sanity-check the metric on the README toy example (see "Metric check")
 # 1. Audit the data (streaming; safe on small machines):
-python3 code/business_entity_resolution/src/inspect.py \
+python3 code/business_entity_resolution/src/audit.py \
     --source dataset/train/train_source1.tsv --examples 3
-python3 code/business_entity_resolution/src/inspect.py \
+python3 code/business_entity_resolution/src/audit.py \
     --ground-truth dataset/train/train_ground_truth.tsv
 
 # 2. Validate any submission before uploading:
